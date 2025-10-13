@@ -9,12 +9,18 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QAction,
                              QToolBar, QColorDialog, QDoubleSpinBox)
 from PyQt5.QtGui import (QFont, QTextCharFormat, QColor, QTextCursor, 
                          QTextListFormat, QTextBlockFormat)
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
 
-from spell_checker import SpellCheckHighlighter, SpellCheckTextEdit
-from font_manager import CustomFontComboBox, FavoriteFontsDialog, FontSettingsManager
-from find_replace import FindReplaceDialog
+try:
+    from spell_checker import SpellCheckHighlighter, SpellCheckTextEdit
+    from font_manager import CustomFontComboBox, FavoriteFontsDialog, FontSettingsManager
+    from find_replace import FindReplaceDialog
+    from writing_checker import WritingChecker
+    from writing_checker_ui import WritingCheckerDock, WritingHighlighter
+except ImportError as e:
+    print(f"Import error: {e}")
+    sys.exit(1)
 
 
 class WordProcessor(QMainWindow):
@@ -27,11 +33,16 @@ class WordProcessor(QMainWindow):
         self.font_manager = FontSettingsManager()
         self.favorite_fonts = self.font_manager.load_favorites()
         self.spell_check_enabled = True
+        self.writing_checker = WritingChecker()
+        self.writing_checker_visible = False
+        self.check_timer = QTimer()
+        self.check_timer.timeout.connect(self.run_writing_check)
+        self.check_timer.setInterval(1000)  # Check every 1 second
         self.init_ui()
     
     def init_ui(self):
         """Initialize the user interface."""
-        self.setWindowTitle('Word Processor')
+        self.setWindowTitle('Keep Me Honest')
         self.setGeometry(100, 100, 1000, 600)
         
         # Create the text editor with spell checking
@@ -55,7 +66,119 @@ class WordProcessor(QMainWindow):
         self.create_format_toolbar()
         self.create_paragraph_toolbar()
         
+        # Create writing checker dock
+        self.writing_checker_dock = WritingCheckerDock(self)
+        self.writing_checker_dock.check_type_changed.connect(self.on_check_type_changed)
+        self.writing_checker_dock.ignore_issue.connect(self.on_ignore_issue)
+        self.writing_checker_dock.add_cinnamon_word.connect(self.on_add_cinnamon_word)
+        self.writing_checker_dock.remove_cinnamon_word.connect(self.on_remove_cinnamon_word)
+        self.writing_checker_dock.refresh_requested.connect(self.run_writing_check)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.writing_checker_dock)
+        self.writing_checker_dock.hide()
+        
+        # Connect text changes for writing checker
+        self.text_edit.textChanged.connect(self.schedule_writing_check)
+        self.text_edit.selectionChanged.connect(self.update_selection_readability)
+        
         self.show()
+    
+    # Writing checker methods (must be here, before first use in __init__)
+    def toggle_writing_checker(self):
+        """Toggle writing checker visibility."""
+        self.writing_checker_visible = not self.writing_checker_visible
+        if self.writing_checker_visible:
+            self.writing_checker_dock.show()
+            self.run_writing_check()
+            self.check_timer.start()
+        else:
+            self.writing_checker_dock.hide()
+            self.check_timer.stop()
+            WritingHighlighter.highlight_issues(self.text_edit, [])
+        self.writing_check_action.setChecked(self.writing_checker_visible)
+    
+    def schedule_writing_check(self):
+        """Schedule a writing check (debounced)."""
+        if self.writing_checker_visible:
+            self.check_timer.stop()
+            self.check_timer.start()
+    
+    def run_writing_check(self):
+        """Run the writing checker and update highlights."""
+        self.check_timer.stop()
+        
+        if not self.readability or not self.writing_checker:
+            return
+        
+        text = self.text_edit.toPlainText()
+        issues = self.writing_checker.check_text(text)
+        
+        # Analyze readability of entire document
+        analysis = self.readability.analyze(text)
+        readability_text = self.readability.format_analysis(analysis)
+        self.writing_checker_dock.set_readability(readability_text)
+        
+        # Analyze selection if text is selected
+        cursor = self.text_edit.textCursor()
+        if cursor.hasSelection():
+            selected_text = cursor.selectedText()
+            selection_analysis = self.readability.analyze(selected_text)
+            selection_readability = self.readability.format_analysis_compact(selection_analysis)
+            self.writing_checker_dock.set_selection_readability(
+                f"✓ {selection_readability}"
+            )
+        else:
+            self.writing_checker_dock.set_selection_readability(
+                "(Select text to analyze)"
+            )
+        
+        self.writing_checker_dock.set_issues(issues)
+        WritingHighlighter.highlight_issues(self.text_edit, issues)
+    
+    def update_selection_readability(self):
+        """Update readability analysis for selected text."""
+        if not self.writing_checker_visible:
+            return
+        
+        cursor = self.text_edit.textCursor()
+        if cursor.hasSelection():
+            selected_text = cursor.selectedText()
+            selection_analysis = self.readability.analyze(selected_text)
+            selection_readability = self.readability.format_analysis_compact(selection_analysis)
+            self.writing_checker_dock.set_selection_readability(
+                f"✓ {selection_readability}"
+            )
+        else:
+            self.writing_checker_dock.set_selection_readability(
+                "(Select text to analyze)"
+            )
+    
+    def on_check_type_changed(self, check_type: str, enabled: bool):
+        """Handle check type toggle."""
+        self.writing_checker.set_check_enabled(check_type, enabled)
+        self.run_writing_check()
+    
+    def on_ignore_issue(self, issue_index: int):
+        """Handle ignoring an issue by removing its highlight."""
+        issues = self.writing_checker_dock.issues
+        if 0 <= issue_index < len(issues):
+            removed_issue = issues.pop(issue_index)
+            WritingHighlighter.highlight_issues(self.text_edit, issues)
+            self.writing_checker_dock.set_issues(issues)
+            if issues:
+                next_index = min(issue_index, len(issues) - 1)
+                self.writing_checker_dock.show_issue(next_index)
+    
+    def on_add_cinnamon_word(self, word: str):
+        """Add a word to cinnamon words list."""
+        self.writing_checker.add_cinnamon_word(word)
+        self.writing_checker_dock.set_cinnamon_words(self.writing_checker.cinnamon_words)
+        self.run_writing_check()
+    
+    def on_remove_cinnamon_word(self, word: str):
+        """Remove a word from cinnamon words list."""
+        self.writing_checker.remove_cinnamon_word(word)
+        self.writing_checker_dock.set_cinnamon_words(self.writing_checker.cinnamon_words)
+        self.run_writing_check()
     
     def create_format_toolbar(self):
         """Create the text formatting toolbar."""
@@ -307,3 +430,317 @@ class WordProcessor(QMainWindow):
         underline_action.setShortcut('Ctrl+U')
         underline_action.triggered.connect(self.toggle_underline)
         menu.addAction(underline_action)
+        
+        strikethrough_action = QAction('Strikethrough', self)
+        strikethrough_action.setShortcut('Ctrl+Shift+X')
+        strikethrough_action.triggered.connect(self.toggle_strikethrough)
+        menu.addAction(strikethrough_action)
+        
+        menu.addSeparator()
+        
+        color_action = QAction('Text Color...', self)
+        color_action.triggered.connect(self.change_text_color)
+        menu.addAction(color_action)
+        
+        highlight_action = QAction('Highlight Color...', self)
+        highlight_action.triggered.connect(self.change_highlight_color)
+        menu.addAction(highlight_action)
+        
+        menu.addSeparator()
+        
+        align_submenu = menu.addMenu('Alignment')
+        
+        align_left_menu = QAction('Align Left', self)
+        align_left_menu.triggered.connect(lambda: self.set_alignment(Qt.AlignLeft))
+        align_submenu.addAction(align_left_menu)
+        
+        align_center_menu = QAction('Align Center', self)
+        align_center_menu.triggered.connect(lambda: self.set_alignment(Qt.AlignCenter))
+        align_submenu.addAction(align_center_menu)
+        
+        align_right_menu = QAction('Align Right', self)
+        align_right_menu.triggered.connect(lambda: self.set_alignment(Qt.AlignRight))
+        align_submenu.addAction(align_right_menu)
+        
+        align_justify_menu = QAction('Justify', self)
+        align_justify_menu.triggered.connect(lambda: self.set_alignment(Qt.AlignJustify))
+        align_submenu.addAction(align_justify_menu)
+        
+        menu.addSeparator()
+        
+        bullet_menu_action = QAction('Bullet List', self)
+        bullet_menu_action.triggered.connect(self.toggle_bullet_list)
+        menu.addAction(bullet_menu_action)
+        
+        numbered_menu_action = QAction('Numbered List', self)
+        numbered_menu_action.triggered.connect(self.toggle_numbered_list)
+        menu.addAction(numbered_menu_action)
+    
+    def _add_tools_menu_actions(self, menu):
+        """Add actions to Tools menu."""
+        self.spell_check_action = QAction('Enable Spell Check', self)
+        self.spell_check_action.setCheckable(True)
+        self.spell_check_action.setChecked(self.spell_check_enabled)
+        self.spell_check_action.triggered.connect(self.toggle_spell_check)
+        menu.addAction(self.spell_check_action)
+        
+        menu.addSeparator()
+        
+        self.writing_check_action = QAction('Writing Checker', self)
+        self.writing_check_action.setCheckable(True)
+        self.writing_check_action.setChecked(False)
+        self.writing_check_action.triggered.connect(self.toggle_writing_checker)
+        menu.addAction(self.writing_check_action)
+    
+    # Font methods
+    def change_font(self, font):
+        """Change the current font."""
+        self.text_edit.setCurrentFont(font)
+    
+    def change_font_size(self, size):
+        """Change the font size."""
+        self.text_edit.setFontPointSize(size)
+    
+    def add_current_font_to_favorites(self):
+        """Add current font to favorites."""
+        current_font = self.font_combo.currentFont().family()
+        if current_font not in self.font_combo.favorites:
+            self.font_combo.add_to_favorites(current_font)
+            QMessageBox.information(self, 'Added to Favorites', 
+                                  f'"{current_font}" has been added to your favorites!')
+        else:
+            QMessageBox.information(self, 'Already a Favorite', 
+                                  f'"{current_font}" is already in your favorites.')
+    
+    def manage_favorites(self):
+        """Open dialog to manage favorite fonts."""
+        dialog = FavoriteFontsDialog(self.font_combo.favorites, self)
+        if dialog.exec_() == QDialog.Accepted:
+            from PyQt5.QtWidgets import QDialog
+            new_favorites = dialog.get_favorites()
+            self.font_combo.set_favorites(new_favorites)
+            self.save_favorites()
+    
+    def save_favorites(self):
+        """Save favorite fonts."""
+        self.font_manager.save_favorites(self.font_combo.favorites)
+    
+    # Text formatting methods
+    def toggle_bold(self):
+        """Toggle bold formatting."""
+        fmt = self.text_edit.currentCharFormat()
+        if fmt.fontWeight() == QFont.Bold:
+            fmt.setFontWeight(QFont.Normal)
+        else:
+            fmt.setFontWeight(QFont.Bold)
+        self.text_edit.setCurrentCharFormat(fmt)
+    
+    def toggle_italic(self):
+        """Toggle italic formatting."""
+        state = self.text_edit.fontItalic()
+        self.text_edit.setFontItalic(not state)
+    
+    def toggle_underline(self):
+        """Toggle underline formatting."""
+        state = self.text_edit.fontUnderline()
+        self.text_edit.setFontUnderline(not state)
+    
+    def toggle_strikethrough(self):
+        """Toggle strikethrough formatting."""
+        fmt = self.text_edit.currentCharFormat()
+        fmt.setFontStrikeOut(not fmt.fontStrikeOut())
+        self.text_edit.setCurrentCharFormat(fmt)
+    
+    def change_text_color(self):
+        """Change text color."""
+        color = QColorDialog.getColor()
+        if color.isValid():
+            self.text_edit.setTextColor(color)
+    
+    def change_highlight_color(self):
+        """Change text highlight color."""
+        color = QColorDialog.getColor()
+        if color.isValid():
+            fmt = self.text_edit.currentCharFormat()
+            fmt.setBackground(color)
+            self.text_edit.setCurrentCharFormat(fmt)
+    
+    # Paragraph formatting methods
+    def set_alignment(self, alignment):
+        """Set text alignment."""
+        self.text_edit.setAlignment(alignment)
+    
+    def toggle_bullet_list(self):
+        """Toggle bullet list formatting."""
+        cursor = self.text_edit.textCursor()
+        current_list = cursor.currentList()
+        
+        if current_list:
+            cursor.currentList().remove(cursor.block())
+        else:
+            list_format = QTextListFormat()
+            list_format.setStyle(QTextListFormat.ListDisc)
+            cursor.createList(list_format)
+    
+    def toggle_numbered_list(self):
+        """Toggle numbered list formatting."""
+        cursor = self.text_edit.textCursor()
+        current_list = cursor.currentList()
+        
+        if current_list:
+            cursor.currentList().remove(cursor.block())
+        else:
+            list_format = QTextListFormat()
+            list_format.setStyle(QTextListFormat.ListDecimal)
+            cursor.createList(list_format)
+    
+    def change_line_spacing(self, value):
+        """Change line spacing."""
+        cursor = self.text_edit.textCursor()
+        block_format = cursor.blockFormat()
+        block_format.setLineHeight(value * 100, QTextBlockFormat.ProportionalHeight)
+        cursor.setBlockFormat(block_format)
+    
+    # Spell check methods
+    def toggle_spell_check(self):
+        """Toggle spell checking on/off."""
+        if self.highlighter:
+            self.spell_check_enabled = not self.spell_check_enabled
+            self.highlighter.set_enabled(self.spell_check_enabled)
+            self.spell_check_action.setChecked(self.spell_check_enabled)
+    
+    # Find and Replace methods
+    def show_find_replace(self):
+        """Show find and replace dialog."""
+        if not self.find_dialog:
+            self.find_dialog = FindReplaceDialog(self)
+        self.find_dialog.show()
+        self.find_dialog.raise_()
+        self.find_dialog.activateWindow()
+    
+    # File operations
+    def new_file(self):
+        """Create a new document."""
+        if self.text_edit.document().isModified():
+            reply = QMessageBox.question(self, 'Save Changes?',
+                                        'Do you want to save changes to the current document?',
+                                        QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+            if reply == QMessageBox.Yes:
+                self.save_file()
+            elif reply == QMessageBox.Cancel:
+                return
+        
+        self.text_edit.clear()
+        self.current_file = None
+        self.setWindowTitle('Keep Me Honest - Untitled')
+    
+    def open_file(self):
+        """Open a file."""
+        filename, _ = QFileDialog.getOpenFileName(self, 'Open File', '',
+                                                  'HTML Files (*.html);;Text Files (*.txt);;All Files (*)')
+        if filename:
+            try:
+                with open(filename, 'r') as f:
+                    content = f.read()
+                    if filename.endswith('.html'):
+                        self.text_edit.setHtml(content)
+                    else:
+                        self.text_edit.setPlainText(content)
+                    self.current_file = filename
+                    self.setWindowTitle(f'Keep Me Honest - {filename}')
+            except Exception as e:
+                QMessageBox.warning(self, 'Error', f'Could not open file: {str(e)}')
+    
+    def save_file(self):
+        """Save the current file."""
+        if self.current_file:
+            try:
+                with open(self.current_file, 'w') as f:
+                    if self.current_file.endswith('.html'):
+                        f.write(self.text_edit.toHtml())
+                    else:
+                        f.write(self.text_edit.toPlainText())
+                self.text_edit.document().setModified(False)
+                return True
+            except Exception as e:
+                QMessageBox.warning(self, 'Error', f'Could not save file: {str(e)}')
+                return False
+        else:
+            return self.save_file_as()
+    
+    def save_file_as(self):
+        """Save file with a new name."""
+        filename, _ = QFileDialog.getSaveFileName(self, 'Save File As', '',
+                                                  'HTML Files (*.html);;Text Files (*.txt);;All Files (*)')
+        if filename:
+            self.current_file = filename
+            self.setWindowTitle(f'Keep Me Honest - {filename}')
+            return self.save_file()
+        return False
+    
+    # Print methods
+    def print_document(self):
+        """Print the document."""
+        printer = QPrinter(QPrinter.HighResolution)
+        dialog = QPrintDialog(printer, self)
+        
+        if dialog.exec_() == QPrintDialog.Accepted:
+            self.text_edit.document().print_(printer)
+    
+    def print_preview(self):
+        """Show print preview."""
+        printer = QPrinter(QPrinter.HighResolution)
+        preview = QPrintPreviewDialog(printer, self)
+        preview.paintRequested.connect(lambda p: self.text_edit.document().print_(p))
+        preview.exec_()
+    
+    # Update UI methods
+    def update_format_buttons(self):
+        """Update format button states based on cursor position."""
+        fmt = self.text_edit.currentCharFormat()
+        
+        self.bold_action.setChecked(fmt.fontWeight() == QFont.Bold)
+        self.italic_action.setChecked(fmt.font().italic())
+        self.underline_action.setChecked(fmt.font().underline())
+        self.strikethrough_action.setChecked(fmt.fontStrikeOut())
+        
+        self.font_combo.setCurrentFont(fmt.font())
+        self.font_size.setValue(int(fmt.font().pointSize()) if fmt.font().pointSize() > 0 else 12)
+    
+    def update_paragraph_buttons(self):
+        """Update paragraph button states."""
+        alignment = self.text_edit.alignment()
+        
+        self.align_left_action.setChecked(alignment == Qt.AlignLeft)
+        self.align_center_action.setChecked(alignment == Qt.AlignCenter)
+        self.align_right_action.setChecked(alignment == Qt.AlignRight)
+        self.align_justify_action.setChecked(alignment == Qt.AlignJustify)
+    
+    def closeEvent(self, event):
+        """Handle application close."""
+        if self.text_edit.document().isModified():
+            reply = QMessageBox.question(self, 'Save Changes?',
+                                        'Do you want to save changes before closing?',
+                                        QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+            if reply == QMessageBox.Yes:
+                if self.save_file():
+                    event.accept()
+                else:
+                    event.ignore()
+            elif reply == QMessageBox.No:
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.accept()
+
+
+def main():
+    """Main entry point."""
+    app = QApplication(sys.argv)
+    word_processor = WordProcessor()
+    sys.exit(app.exec_())
+
+
+if __name__ == '__main__':
+    main()
