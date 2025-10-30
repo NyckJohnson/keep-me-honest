@@ -2,8 +2,7 @@
 
 from PyQt5.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout,
                              QCheckBox, QListWidget, QListWidgetItem, QPushButton,
-                             QLabel, QLineEdit, QSpinBox, QDialog, QMessageBox,
-                             QTextEdit)
+                             QLabel, QLineEdit)
 from PyQt5.QtGui import QColor, QTextCursor, QTextCharFormat
 from PyQt5.QtCore import Qt, pyqtSignal
 
@@ -11,8 +10,8 @@ from PyQt5.QtCore import Qt, pyqtSignal
 class WritingCheckerDock(QDockWidget):
     """Sidebar dock for writing checker controls and issues."""
     
-    check_type_changed = pyqtSignal(str, bool)  # (check_type, enabled)
-    ignore_issue = pyqtSignal(int)  # index in issues list
+    check_type_changed = pyqtSignal(str, bool)
+    ignore_issue = pyqtSignal(int)
     add_cinnamon_word = pyqtSignal(str)
     remove_cinnamon_word = pyqtSignal(str)
     refresh_requested = pyqtSignal()
@@ -28,6 +27,30 @@ class WritingCheckerDock(QDockWidget):
         """Set up the dock UI."""
         widget = QWidget()
         layout = QVBoxLayout()
+        
+        # Readability section (simplified)
+        layout.addWidget(QLabel("📊 Readability:"))
+        self.readability_display = QLabel("-- Grade")
+        self.readability_display.setAlignment(Qt.AlignCenter)
+        self.readability_display.setStyleSheet("""
+            QLabel {
+                font-size: 32px;
+                font-weight: bold;
+                padding: 20px;
+                border-radius: 5px;
+                background-color: #f0f0f0;
+            }
+        """)
+        layout.addWidget(self.readability_display)
+        
+        # Selection readability
+        layout.addWidget(QLabel("📖 Selection:"))
+        self.selection_readability = QLabel("(Select text to analyze)")
+        self.selection_readability.setWordWrap(True)
+        self.selection_readability.setStyleSheet("padding: 5px;")
+        layout.addWidget(self.selection_readability)
+        
+        layout.addSpacing(10)
         
         # Check type toggles
         layout.addWidget(QLabel("Writing Checks:"))
@@ -184,10 +207,6 @@ class WritingCheckerDock(QDockWidget):
         if self.issues:
             idx = (self.current_issue_index + 1) % len(self.issues)
             self.show_issue(idx)
-            self.issues_list.setCurrentRow(self.issues_list.findItems(
-                self.issues_list.item(idx).text() if idx < self.issues_list.count() else "",
-                Qt.MatchContains
-            )[0] if idx < self.issues_list.count() else 0)
     
     def show_previous_issue(self):
         """Navigate to previous issue."""
@@ -209,31 +228,61 @@ class WritingCheckerDock(QDockWidget):
     
     def remove_cinnamon(self, item):
         """Remove a word from cinnamon list."""
-        word = item.text().split(' (')[0]  # Remove count suffix
+        word = item.text().split(' (')[0]
         self.remove_cinnamon_word.emit(word)
     
     def set_cinnamon_words(self, words):
         """Update the cinnamon words list display."""
         self.cinnamon_list.clear()
         for word in sorted(words):
-            count = 0  # Could track count in future
             item = QListWidgetItem(f"{word} (double-click to remove)")
             self.cinnamon_list.addItem(item)
+    
+    def set_readability_grade(self, grade: float):
+        """
+        Update readability display with grade and appropriate color.
+        
+        Args:
+            grade: Flesch-Kincaid grade level
+        """
+        # Determine color based on grade
+        if grade < 10:
+            color = '#90EE90'  # Soft green
+        elif grade <= 13:
+            color = '#FFE66D'  # Soft yellow
+        else:
+            color = '#FFB3B3'  # Soft red
+        
+        # Update display
+        self.readability_display.setText(f"{grade:.1f} Grade")
+        self.readability_display.setStyleSheet(f"""
+            QLabel {{
+                font-size: 32px;
+                font-weight: bold;
+                padding: 20px;
+                border-radius: 5px;
+                background-color: {color};
+            }}
+        """)
+    
+    def set_selection_readability(self, analysis_text: str):
+        """Update the selection readability display."""
+        self.selection_readability.setText(analysis_text)
 
 
 class WritingHighlighter:
     """Applies highlighting to text for writing issues."""
     
     COLOR_MAP = {
-        'passive_voice': QColor(255, 200, 0, 100),      # Yellow
-        'weak_words': QColor(255, 150, 0, 100),         # Orange
-        'long_sentences': QColor(200, 150, 255, 100),   # Purple
-        'jargon': QColor(150, 200, 255, 100),           # Light blue
-        'adjectives_adverbs': QColor(150, 255, 150, 100),  # Light green
-        'simple_alternatives': QColor(255, 150, 150, 100), # Light red
-        'confused_synonyms': QColor(255, 200, 150, 100),   # Peach
-        'repeated_words': QColor(200, 200, 255, 100),      # Lavender
-        'cinnamon_words': QColor(255, 200, 200, 100)       # Pink
+        'passive_voice': QColor(255, 200, 0, 100),
+        'weak_words': QColor(255, 150, 0, 100),
+        'long_sentences': QColor(200, 150, 255, 100),
+        'jargon': QColor(150, 200, 255, 100),
+        'adjectives_adverbs': QColor(150, 255, 150, 100),
+        'simple_alternatives': QColor(255, 150, 150, 100),
+        'confused_synonyms': QColor(255, 200, 150, 100),
+        'repeated_words': QColor(200, 200, 255, 100),
+        'cinnamon_words': QColor(255, 200, 200, 100)
     }
     
     @staticmethod

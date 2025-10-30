@@ -93,12 +93,17 @@ class WritingChecker:
         """Remove a word from the cinnamon words list."""
         if word.lower() in self.cinnamon_words:
             self.cinnamon_words.remove(word.lower())
+    
+    def set_check_enabled(self, check_type: str, enabled: bool):
         """Enable or disable a specific check."""
         if check_type in self.enabled_checks:
             self.enabled_checks[check_type] = enabled
     
-    def check_text(self, text: str) -> List[WritingIssue]:
-        """Analyze text and return list of issues."""
+    def check_text(self, text: str) -> Tuple[List[WritingIssue], Dict]:
+        """
+        Analyze text and return issues plus readability data.
+        Returns: (issues, readability_dict)
+        """
         issues = []
         
         if self.enabled_checks['passive_voice']:
@@ -130,7 +135,16 @@ class WritingChecker:
         
         # Sort by position
         issues.sort(key=lambda x: x.start)
-        return issues
+        
+        # Get readability analysis
+        readability_data = self.readability.analyze(text)
+        
+        return issues, readability_data
+    
+    def get_readability_compact(self, text: str) -> str:
+        """Get compact readability analysis for selected text."""
+        analysis = self.readability.analyze(text)
+        return self.readability.format_analysis_compact(analysis)
     
     def _check_passive_voice(self, text: str) -> List[WritingIssue]:
         """Detect passive voice constructions."""
