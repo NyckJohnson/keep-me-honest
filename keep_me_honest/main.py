@@ -1,4 +1,7 @@
-"""Keep Me Honest - A word processor with writing analysis."""
+"""Keep Me Honest - Main Application Entry Point
+
+A word processor with writing analysis, spell checking, and readability metrics.
+"""
 
 import sys
 import os
@@ -16,16 +19,29 @@ from PyQt5.QtGui import (
 from PyQt5.QtCore import Qt, QTimer, QSize
 from PyQt5.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
 
-from spell_checker import SpellCheckHighlighter, SpellCheckTextEdit
-from font_manager import CustomFontComboBox, FavoriteFontsDialog, FontSettingsManager
-from find_replace import FindReplaceDialog
-from writing_checker import WritingChecker
-from writing_checker_ui import WritingCheckerDock, WritingHighlighter
-from icon_manager import IconManager, Icons
+# Import from organized structure
+try:
+    # Try package imports first
+    from keep_me_honest.core.spell_checker import SpellCheckHighlighter, SpellCheckTextEdit
+    from keep_me_honest.core.font_manager import CustomFontComboBox, FavoriteFontsDialog, FontSettingsManager
+    from keep_me_honest.ui.find_replace import FindReplaceDialog
+    from keep_me_honest.core.writing_checker import WritingChecker
+    from keep_me_honest.ui.writing_checker_ui import WritingCheckerDock, WritingHighlighter
+    from keep_me_honest.resources.icon_manager import IconManager, Icons
+except ImportError:
+    # Fallback to direct imports (for backwards compatibility)
+    from core.spell_checker import SpellCheckHighlighter, SpellCheckTextEdit
+    from core.font_manager import CustomFontComboBox, FavoriteFontsDialog, FontSettingsManager
+    from ui.find_replace import FindReplaceDialog
+    from core.writing_checker import WritingChecker
+    from ui.writing_checker_ui import WritingCheckerDock, WritingHighlighter
+    from resources.icon_manager import IconManager, Icons
 
 
 class KeepMeHonest(QMainWindow):
-    """Main application window."""
+    """Main application window for Keep Me Honest word processor."""
+    
+    VERSION = "1.0.0"
     
     def __init__(self):
         super().__init__()
@@ -34,7 +50,7 @@ class KeepMeHonest(QMainWindow):
         self.current_file = None
         self.find_dialog = None
         
-        # Managers
+        # Managers and checkers
         self.font_manager = FontSettingsManager()
         self.favorite_fonts = self.font_manager.load_favorites()
         self.icons = IconManager()
@@ -44,16 +60,16 @@ class KeepMeHonest(QMainWindow):
         self.spell_check_enabled = True
         self.writing_checker_visible = False
         
-        # Timer for writing checks
+        # Timer for debounced writing checks
         self.check_timer = QTimer()
         self.check_timer.timeout.connect(self.run_writing_check)
-        self.check_timer.setInterval(1000)
+        self.check_timer.setInterval(1000)  # 1 second debounce
         
         self.setup_ui()
     
     def setup_ui(self):
         """Initialize the user interface."""
-        self.setWindowTitle('Keep Me Honest')
+        self.setWindowTitle(f'Keep Me Honest v{self.VERSION}')
         self.setGeometry(100, 100, 1000, 600)
         
         self.setup_text_editor()
@@ -89,11 +105,12 @@ class KeepMeHonest(QMainWindow):
         self.setup_edit_menu(menubar.addMenu('Edit'))
         self.setup_format_menu(menubar.addMenu('Format'))
         self.setup_tools_menu(menubar.addMenu('Tools'))
+        self.setup_help_menu(menubar.addMenu('Help'))
     
     def setup_file_menu(self, menu):
         """Create File menu."""
         menu.addAction('New', self.new_file, 'Ctrl+N')
-        menu.addAction('Open', self.open_file, 'Ctrl+O')
+        menu.addAction('Open...', self.open_file, 'Ctrl+O')
         menu.addAction('Save', self.save_file, 'Ctrl+S')
         menu.addAction('Save As...', self.save_file_as, 'Ctrl+Shift+S')
         menu.addSeparator()
@@ -153,6 +170,10 @@ class KeepMeHonest(QMainWindow):
         self.writing_check_action.triggered.connect(self.toggle_writing_checker)
         menu.addAction(self.writing_check_action)
     
+    def setup_help_menu(self, menu):
+        """Create Help menu."""
+        menu.addAction('About Keep Me Honest', self.show_about)
+    
     def setup_toolbars(self):
         """Create all toolbars."""
         self.setup_format_toolbar()
@@ -163,7 +184,7 @@ class KeepMeHonest(QMainWindow):
         """Create format toolbar."""
         toolbar = QToolBar('Format')
         toolbar.setMovable(False)
-        toolbar.setIconSize(QSize(16, 16))  # Smaller icons
+        toolbar.setIconSize(QSize(16, 16))
         self.addToolBar(toolbar)
         
         # Font selector
@@ -212,7 +233,7 @@ class KeepMeHonest(QMainWindow):
         
         toolbar.addSeparator()
         
-        # Color button
+        # Highlight button
         toolbar.addAction(self.create_toolbar_action(
             Icons.HIGHLIGHT, 'Highlight', None, self.change_highlight_color
         ))
@@ -221,7 +242,7 @@ class KeepMeHonest(QMainWindow):
         """Create alignment toolbar."""
         toolbar = QToolBar('Alignment')
         toolbar.setMovable(False)
-        toolbar.setIconSize(QSize(16, 16))  # Smaller icons
+        toolbar.setIconSize(QSize(16, 16))
         self.addToolBar(toolbar)
         
         self.align_left_action = self.create_toolbar_action(
@@ -252,7 +273,7 @@ class KeepMeHonest(QMainWindow):
         """Create paragraph toolbar."""
         toolbar = QToolBar('Paragraph')
         toolbar.setMovable(False)
-        toolbar.setIconSize(QSize(16, 16))  # Smaller icons
+        toolbar.setIconSize(QSize(16, 16))
         self.addToolBar(toolbar)
         
         # Line spacing
@@ -337,7 +358,7 @@ class KeepMeHonest(QMainWindow):
     def schedule_writing_check(self):
         """Schedule writing check (debounced)."""
         if self.writing_checker_visible:
-            # Don't run check if user has text selected (they're reading/reviewing)
+            # Don't run check if user has text selected
             if not self.text_edit.textCursor().hasSelection():
                 self.check_timer.stop()
                 self.check_timer.start()
@@ -351,7 +372,7 @@ class KeepMeHonest(QMainWindow):
         text = self.text_edit.toPlainText()
         issues, readability_data = self.writing_checker.check_text(text)
         
-        # Update readability display with just the grade
+        # Update readability display
         grade = readability_data.get('flesch_kincaid_grade', 0)
         self.writing_checker_dock.set_readability_grade(grade)
         
@@ -451,12 +472,6 @@ class KeepMeHonest(QMainWindow):
         fmt.setFontStrikeOut(not fmt.fontStrikeOut())
         self.text_edit.setCurrentCharFormat(fmt)
     
-    def change_text_color(self):
-        """Change text color."""
-        color = QColorDialog.getColor()
-        if color.isValid():
-            self.text_edit.setTextColor(color)
-    
     def change_highlight_color(self):
         """Change highlight color."""
         color = QColorDialog.getColor()
@@ -541,7 +556,7 @@ class KeepMeHonest(QMainWindow):
         
         self.text_edit.clear()
         self.current_file = None
-        self.setWindowTitle('Keep Me Honest - Untitled')
+        self.setWindowTitle(f'Keep Me Honest v{self.VERSION} - Untitled')
     
     def open_file(self):
         """Open file."""
@@ -558,7 +573,7 @@ class KeepMeHonest(QMainWindow):
                     else:
                         self.text_edit.setPlainText(content)
                 self.current_file = filename
-                self.setWindowTitle(f'Keep Me Honest - {filename}')
+                self.setWindowTitle(f'Keep Me Honest v{self.VERSION} - {os.path.basename(filename)}')
             except Exception as e:
                 QMessageBox.warning(self, 'Error', f'Could not open file: {e}')
     
@@ -586,7 +601,7 @@ class KeepMeHonest(QMainWindow):
         )
         if filename:
             self.current_file = filename
-            self.setWindowTitle(f'Keep Me Honest - {filename}')
+            self.setWindowTitle(f'Keep Me Honest v{self.VERSION} - {os.path.basename(filename)}')
             return self.save_file()
         return False
     
@@ -605,6 +620,25 @@ class KeepMeHonest(QMainWindow):
         preview = QPrintPreviewDialog(printer, self)
         preview.paintRequested.connect(lambda p: self.text_edit.document().print_(p))
         preview.exec_()
+    
+    # ========== Help ==========
+    
+    def show_about(self):
+        """Show about dialog."""
+        QMessageBox.about(
+            self,
+            'About Keep Me Honest',
+            f'<h2>Keep Me Honest v{self.VERSION}</h2>'
+            '<p>A word processor with writing analysis.</p>'
+            '<p><b>Features:</b></p>'
+            '<ul>'
+            '<li>Spell checking</li>'
+            '<li>Writing quality analysis</li>'
+            '<li>Readability scoring</li>'
+            '<li>Text formatting</li>'
+            '</ul>'
+            '<p>Built with Python and PyQt5</p>'
+        )
     
     # ========== UI Updates ==========
     
@@ -653,6 +687,10 @@ class KeepMeHonest(QMainWindow):
 def main():
     """Application entry point."""
     app = QApplication(sys.argv)
+    app.setApplicationName("Keep Me Honest")
+    app.setApplicationVersion(KeepMeHonest.VERSION)
+    app.setOrganizationName("Keep Me Honest")
+    
     window = KeepMeHonest()
     sys.exit(app.exec_())
 

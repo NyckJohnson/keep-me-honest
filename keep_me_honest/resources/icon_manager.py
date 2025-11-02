@@ -8,13 +8,17 @@ from PyQt5.QtCore import QSize
 class IconManager:
     """Manages application icons."""
     
-    def __init__(self, icon_dir='icons'):
+    def __init__(self, icon_dir=None):
         """
         Initialize icon manager.
         
         Args:
             icon_dir: Directory containing icon files
         """
+        if icon_dir is None:
+            # Get the directory where this file is located
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            icon_dir = os.path.join(base_dir, 'icons')
         self.icon_dir = icon_dir
         self.icon_cache = {}
         

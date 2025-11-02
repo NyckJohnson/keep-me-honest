@@ -2,7 +2,7 @@
 
 import re
 from typing import List, Tuple, Dict
-from readability import ReadabilityAnalyzer
+from .readability import ReadabilityAnalyzer
 
 
 class WritingIssue:
