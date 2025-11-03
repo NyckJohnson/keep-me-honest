@@ -58,7 +58,7 @@ class KeepMeHonest(QMainWindow):
         
         # Settings
         self.spell_check_enabled = True
-        self.writing_checker_visible = False
+        self.writing_checker_visible = True
         
         # Timer for debounced writing checks
         self.check_timer = QTimer()
@@ -78,6 +78,11 @@ class KeepMeHonest(QMainWindow):
         self.setup_toolbars()
         self.setup_writing_checker_dock()
         self.connect_signals()
+        
+        # Show writing checker by default
+        self.writing_checker_dock.show()
+        self.writing_check_action.setChecked(True)
+        self.check_timer.start()
         
         self.show()
     
@@ -166,7 +171,7 @@ class KeepMeHonest(QMainWindow):
         
         self.writing_check_action = QAction('Writing Checker', self)
         self.writing_check_action.setCheckable(True)
-        self.writing_check_action.setChecked(False)
+        self.writing_check_action.setChecked(True)
         self.writing_check_action.triggered.connect(self.toggle_writing_checker)
         menu.addAction(self.writing_check_action)
     
@@ -562,7 +567,7 @@ class KeepMeHonest(QMainWindow):
         """Open file."""
         filename, _ = QFileDialog.getOpenFileName(
             self, 'Open File', '',
-            'HTML Files (*.html);;Text Files (*.txt);;All Files (*)'
+            'Text Files (*.txt);;HTML Files (*.html);;All Files (*)'
         )
         if filename:
             try:
@@ -597,14 +602,17 @@ class KeepMeHonest(QMainWindow):
         """Save file as."""
         filename, _ = QFileDialog.getSaveFileName(
             self, 'Save File As', '',
-            'HTML Files (*.html);;Text Files (*.txt);;All Files (*)'
+            'Text Files (*.txt);;HTML Files (*.html);;All Files (*)'
         )
         if filename:
+            # Add .txt extension if no extension provided
+            if not os.path.splitext(filename)[1]:
+                filename += '.txt'
             self.current_file = filename
             self.setWindowTitle(f'Keep Me Honest v{self.VERSION} - {os.path.basename(filename)}')
             return self.save_file()
         return False
-    
+        
     # ========== Print ==========
     
     def print_document(self):
